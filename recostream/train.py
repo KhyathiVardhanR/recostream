@@ -39,6 +39,27 @@ def popularity_topk(history: pd.DataFrame, n_items: int, seen, users: np.ndarray
     return out
 
 
+def recent_popularity_topk(inter: pd.DataFrame, seen, users: np.ndarray, ref_ts: np.ndarray, k: int,
+                           window_days: int = 30) -> np.ndarray:
+    """Time-aware popularity: most-interacted items in the `window_days`
+    before each user's reference time (their last known interaction)."""
+    order = np.argsort(inter.ts.values, kind="stable")
+    ts = inter.ts.values[order]
+    items = inter.item.values[order]
+    n_items = int(items.max()) + 1
+    week = ref_ts // (7 * 86400)
+    out = np.empty((len(users), k), dtype=np.int32)
+    for w in np.unique(week):
+        idx = np.flatnonzero(week == w)
+        end = (w + 1) * 7 * 86400
+        lo, hi = np.searchsorted(ts, [end - window_days * 86400, end])
+        top = np.argsort(-np.bincount(items[lo:hi], minlength=n_items))[: k + 1000]
+        for r in idx:
+            s = set(seen[users[r]].indices)
+            out[r] = [i for i in top if i not in s][:k]
+    return out
+
+
 def relevant_sets(df: pd.DataFrame, users: np.ndarray) -> list[set[int]]:
     g = df.groupby("user").item.apply(set)
     return [g.get(u, set()) for u in users]
@@ -85,12 +106,15 @@ def run(epochs: int, ranker_users: int, eval_users: int, upload: bool, seed: int
     seen_hv = seen_matrix(hv.user.values, hv.item.values, ds.n_users, ds.n_items)
     rel = relevant_sets(ds.test, ev_users)
     pop_rank = popularity_topk(ds.history, ds.n_items, seen_hv, ev_users, k)
+    ref_ts = hv.groupby("user").ts.max().reindex(ev_users).values
+    rpop_rank = recent_popularity_topk(hv, seen_hv, ev_users, ref_ts, k)
     cand_e, cscore_e = top_candidates(U, V, B, ev_users, seen_hv, n_cand)
     uf_e = user_features(hv, ev_users, ds.item_genres)
     dense_e = pair_features(uf_e, cand_e, cscore_e, items)
     rr = rerank(ranker, U, V, U[ev_users], cand_e, dense_e, k, dev=device())
     metrics = {
         "popularity": evaluate("popularity", pop_rank, rel, k),
+        "recent_popularity": evaluate("recent-pop", rpop_rank, rel, k),
         "mf": evaluate("mf", cand_e[:, :k], rel, k),
         "ranker": evaluate("mf+ranker", rr, rel, k),
         "eval_users": int(len(ev_users)),
@@ -98,10 +122,16 @@ def run(epochs: int, ranker_users: int, eval_users: int, upload: bool, seed: int
         "train_interactions": int(len(ds.history)),
     }
     base = metrics["popularity"]["ndcg@10"]
+    rbase = metrics["recent_popularity"]["ndcg@10"]
     metrics["ndcg_lift_vs_popularity"] = {
         "mf": metrics["mf"]["ndcg@10"] / base - 1, "ranker": metrics["ranker"]["ndcg@10"] / base - 1}
+    metrics["ndcg_lift_vs_recent_popularity"] = {
+        "mf": metrics["mf"]["ndcg@10"] / rbase - 1, "ranker": metrics["ranker"]["ndcg@10"] / rbase - 1}
     print(f"[eval] NDCG@10 lift over popularity: MF {metrics['ndcg_lift_vs_popularity']['mf']*100:+.1f}%, "
           f"MF+ranker {metrics['ndcg_lift_vs_popularity']['ranker']*100:+.1f}%")
+    print(f"[eval] NDCG@10 lift over recent popularity: MF "
+          f"{metrics['ndcg_lift_vs_recent_popularity']['mf']*100:+.1f}%, "
+          f"MF+ranker {metrics['ndcg_lift_vs_recent_popularity']['ranker']*100:+.1f}%")
 
     # ---- 4. artifacts + registry
     version = registry.new_version()
