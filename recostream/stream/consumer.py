@@ -18,13 +18,14 @@ import time
 import numpy as np
 import orjson
 from confluent_kafka import Consumer, KafkaError
-from prometheus_client import Counter, Gauge, start_http_server
+from prometheus_client import CollectorRegistry, Counter, Gauge, multiprocess, start_http_server
 
 from .. import feature_store
 from ..config import settings
 
 EVENTS = Counter("reco_stream_events_total", "Interaction events processed", ["worker"])
-BATCH_SECONDS = Gauge("reco_stream_last_batch_seconds", "Time to process the last batch", ["worker"])
+BATCH_SECONDS = Gauge("reco_stream_last_batch_seconds", "Time to process the last batch", ["worker"],
+                      multiprocess_mode="max")
 ONLINE_HITS = Counter("reco_online_hits_total", "Events whose item was in the user's served top-k")
 ONLINE_EVENTS = Counter("reco_online_events_with_recs_total", "Events for users that had recommendations served")
 
@@ -100,7 +101,15 @@ def main():
     ap.add_argument("--metrics-port", type=int, default=9300)
     a = ap.parse_args()
     item_genres = load_item_genres(a.model_npz)
-    start_http_server(a.metrics_port)
+    # Workers are separate processes: aggregate their metrics through
+    # prometheus_client's multiprocess mode.
+    mp_dir = os.environ.setdefault("PROMETHEUS_MULTIPROC_DIR", f"/tmp/reco-consumer-metrics-{os.getpid()}")
+    os.makedirs(mp_dir, exist_ok=True)
+    for f in os.listdir(mp_dir):
+        os.remove(os.path.join(mp_dir, f))
+    reg = CollectorRegistry()
+    multiprocess.MultiProcessCollector(reg)
+    start_http_server(a.metrics_port, registry=reg)
     procs = [mp.Process(target=run_worker, args=(i, a.group, a.batch, item_genres, 0), daemon=True)
              for i in range(a.workers)]
     for p in procs:

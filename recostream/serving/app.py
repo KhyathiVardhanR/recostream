@@ -24,7 +24,7 @@ from pathlib import Path
 import torch
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import ORJSONResponse
-from prometheus_client import Counter, Gauge, Histogram, make_asgi_app
+from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, make_asgi_app, multiprocess
 
 from .. import feature_store, registry
 from ..config import settings
@@ -41,11 +41,25 @@ STAGE = Histogram("reco_stage_seconds", "Per-batch stage latency", ["stage"],
                   buckets=(.0005, .001, .002, .005, .01, .02, .05, .1, .2))
 BATCH = Histogram("reco_batch_size", "Users per inference batch", buckets=(1, 2, 4, 8, 16, 32, 64, 128))
 SERVED = Counter("reco_recommendations_total", "Recommendation requests served")
-MODEL_INFO = Gauge("reco_model_info", "Active model (value = offline NDCG@10)", ["version"])
-ONLINE_HIT_RATE = Gauge("reco_online_hit_rate", "Share of streamed events whose item was in the served top-k")
+MODEL_INFO = Gauge("reco_model_info", "Active model (value = offline NDCG@10)", ["version"],
+                   multiprocess_mode="max")
+ONLINE_HIT_RATE = Gauge("reco_online_hit_rate", "Share of streamed events whose item was in the served top-k",
+                        multiprocess_mode="max")
 
 app = FastAPI(title="RecoStream", default_response_class=ORJSONResponse)
-app.mount("/metrics", make_asgi_app())
+
+
+def metrics_app():
+    """With several uvicorn workers, aggregate every worker's metrics
+    (PROMETHEUS_MULTIPROC_DIR must be set before the workers start)."""
+    if os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
+        reg = CollectorRegistry()
+        multiprocess.MultiProcessCollector(reg)
+        return make_asgi_app(registry=reg)
+    return make_asgi_app()
+
+
+app.mount("/metrics", metrics_app())
 
 state: dict = {}
 executor = ThreadPoolExecutor(max_workers=1)  # one inference thread per worker process
