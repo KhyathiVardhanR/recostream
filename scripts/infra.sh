@@ -11,7 +11,7 @@ kafka_cfg() {
   cat >"$RUN/kraft.properties" <<EOF
 process.roles=broker,controller
 node.id=1
-controller.quorum.voters=1@127.0.0.1:9093
+controller.quorum.bootstrap.servers=127.0.0.1:9093
 listeners=PLAINTEXT://127.0.0.1:9092,CONTROLLER://127.0.0.1:9093
 advertised.listeners=PLAINTEXT://127.0.0.1:9092
 controller.listener.names=CONTROLLER
