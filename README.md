@@ -143,6 +143,20 @@ curl localhost:8000/online-quality
 .venv/bin/python scripts/e2e_online.py              # online vs offline quality
 ```
 
+## Running with Docker
+
+The whole stack runs in containers: Kafka, Redis, the API, the consumer group, Prometheus, and (locally) an S3-compatible endpoint.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile local-s3 up -d --build kafka redis s3 prometheus
+# publish a trained model to the containerized S3 (exposed on :9000), then:
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile local-s3 run --rm bootstrap
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile local-s3 up -d api consumer
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile local-s3 --profile jobs run --rm producer
+```
+
+This was verified end to end. The API served the production model pulled from S3. The containerized producer streamed 50,000 events through Kafka, and the consumer group processed all of them. Prometheus scraped both the API and the consumer.
+
 ## Deploying to AWS (EC2 + S3)
 
 `deploy/terraform` creates:
@@ -158,7 +172,7 @@ S3_BUCKET=$(terraform output -raw bucket) python -m recostream.train   # publish
 ../../scripts/deploy_ec2.sh $(terraform output -raw public_ip) ~/.ssh/<key>.pem
 ```
 
-On the instance, `docker compose` runs Kafka, Redis, the API, the consumer group, and Prometheus. Models come from S3 through the instance role. The Terraform and Docker files are provided but haven't yet been applied to a real AWS account. Every benchmark number above comes from the local setup.
+On the instance, `docker compose` runs Kafka, Redis, the API, the consumer group, and Prometheus. Models come from S3 through the instance role. The Docker stack is verified locally (see above). The Terraform hasn't yet been applied to a real AWS account. Every benchmark number above comes from the local, non-container setup.
 
 ### Prometheus metrics
 
