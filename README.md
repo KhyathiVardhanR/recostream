@@ -118,6 +118,10 @@ The pipeline was run end to end:
 
 Result: online **HitRate@10 = 0.346**, compared with **0.362 offline** on the same metric ([details](results/online.md)). This confirms the serving path reproduces offline quality, and the same signal is exported continuously as a Prometheus metric.
 
+## Pretrained model
+
+The production model from the results above is attached to the [v1.0.0 release](https://github.com/KhyathiVardhanR/recostream/releases/tag/v1.0.0). It includes the embeddings and item features (`model.npz`, 178 MB), the ranker weights (`ranker.pt`), and the evaluation metrics (`metrics.json`). To serve it without retraining, download it into `artifacts/<version>/` and set `RECO_MODEL_DIR`. Loading the online features (`python -m recostream.bootstrap --model-dir …`) still needs the MovieLens-25M data.
+
 ## Running locally
 
 ```bash
