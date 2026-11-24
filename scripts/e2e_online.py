@@ -24,7 +24,10 @@ sys.path.insert(0, str(ROOT))
 import httpx  # noqa: E402
 import numpy as np  # noqa: E402
 
-from recostream import data, feature_store  # noqa: E402
+import pandas as pd  # noqa: E402
+
+from recostream import data, feature_store, registry  # noqa: E402
+from recostream.config import settings  # noqa: E402
 from recostream.stream import producer  # noqa: E402
 
 
@@ -51,6 +54,12 @@ def main():
     r = feature_store.client()
     for k in ("eval:events", "eval:events_with_recs", "eval:hits"):
         r.delete(k)
+    # Reset these users' online features to history+val so the run is
+    # repeatable (a previous run streamed their test events already).
+    prod = registry.production()
+    z = np.load(registry.download(prod["version"], settings.artifacts_dir / "cache") / "model.npz")
+    hv = pd.concat([ds.history, ds.val]).sort_values(["user", "ts"], kind="stable")
+    feature_store.bootstrap(r, hv, z["user_emb"], z["item_genres"], users=users)
 
     t0 = time.time()
     asyncio.run(fetch_recs(a.url, users))
